@@ -244,27 +244,32 @@ def parse_config(config_path, pactl, evdev, uinput, midi_out):
 			action_map[keycode] = nano_action_evdev(evdev_action=evdev_action, uinput=uinput, led_handler=led_handler)
 		
 		else:
-			if actions[0] == 'mute':
-				# Toggle mute of audio device
-				action_map[keycode] = nano_action_mute(audio_device=audio_devices[actions[1]], pactl=pactl, led_handler=led_handler)
+			try:
+				if actions[0] == 'mute':
+					# Toggle mute of audio device
+					audio_device = audio_devices[actions[1]]
+					action_map[keycode] = nano_action_mute(audio_device=audio_device, pactl=pactl, led_handler=led_handler)
+					led_handler.set_led(led=keycode, value=audio_device.mute)
+
+				elif actions[0] == 'volume':
+					# Change volume of audio device
+					volume_details = actions[1].split('/', 1)
+
+					if len(volume_details) == 1:
+						# No max volume override
+						action_map[keycode] = nano_action_volume(audio_device=audio_devices[volume_details[0]], pactl=pactl)
+					else:
+						# Max volume override
+						action_map[keycode] = nano_action_volume(audio_device=audio_devices[volume_details[0]], pactl=pactl, max_level=float(volume_details[1]))
 			
-			elif actions[0] == 'volume':
-				# Change volume of audio device
-				volume_details = actions[1].split('/', 1)
+				elif actions[0] == 'exec':
+					# Execute a command
+					action_map[keycode] = nano_action_exec(command=actions[1])
 				
-				if len(volume_details) == 1:
-					# No max volume override
-					action_map[keycode] = nano_action_volume(audio_device=audio_devices[volume_details[0]], pactl=pactl)
 				else:
-					# Max volume override
-					action_map[keycode] = nano_action_volume(audio_device=audio_devices[volume_details[0]], pactl=pactl, max_level=float(volume_details[1]))
-			
-			elif actions[0] == 'exec':
-				# Execute a command
-				action_map[keycode] = nano_action_exec(command=actions[1])
-			
-			else:
-				logging.warning('Unknown action {}'.format(config_object.get('keymap', keyname)))
+					logging.warning('Unknown action {}'.format(config_object.get('keymap', keyname)))
+			except:
+				logging.warning('Config error')
 	
 	return action_map
 		
@@ -304,8 +309,10 @@ if args.list_devices:
 ui = uinput.UInput()
 
 # Open the MIDI objects for the nanKONTROL2 device
-inport = mido.open_input('nanoKONTROL2 MIDI 1')
-outport = mido.open_output('nanoKONTROL2 MIDI 1')
+inname = mido.get_input_names()[-1]
+inport = mido.open_input(inname)
+outname = mido.get_output_names()[-1]
+outport = mido.open_output(outname)
 
 # Get config
 logging.debug('Trying to load config from {}'.format(args.config))
@@ -315,6 +322,9 @@ action_map = parse_config(args.config, pactl, e, ui, outport)
 for msg in inport:
 	if msg.type == 'control_change':
 		logging.debug('Keypress {} value {}'.format(msg.control, msg.value))
+		if msg.control not in action_map.keys():
+			action_map = parse_config(args.config, pactl, e, ui, outport)
+			logging.debug('Updating config')
 		if msg.control in action_map.keys():
 			action_map[msg.control].action(key=msg.control, value=msg.value)
 	else:
